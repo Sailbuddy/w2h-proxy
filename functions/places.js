@@ -9,22 +9,30 @@ exports.handler = async function (event) {
     "Access-Control-Allow-Headers": "Content-Type"
   };
 
-  // 🪵 Debug-Logging
+  // 🪵 Eingehendes Event debuggen
   console.log("➡️ Incoming event:", JSON.stringify(event, null, 2));
 
   const input = event.queryStringParameters?.input;
   const repo = event.queryStringParameters?.repo;
 
-  console.log("🧪 Parsed params:", { input, repo });
-  console.log("🔐 Token loaded:", !!GITHUB_TOKEN);
+  console.log("🧪 Parsed query parameters:", { input, repo });
+  console.log("🔐 Token loaded:", !!GITHUB_TOKEN, "| Key loaded:", !!GOOGLE_API_KEY);
 
-  // Fehlerprüfung bei fehlenden Werten
-  if (!input || !repo || !GITHUB_TOKEN) {
-    console.error("❌ Missing input, repo or token");
+  // 🔍 Fehlerprüfung
+  if (!input || !repo || !GITHUB_TOKEN || !GOOGLE_API_KEY) {
+    console.error("❌ Missing required data:", {
+      inputPresent: !!input,
+      repoPresent: !!repo,
+      tokenPresent: !!GITHUB_TOKEN,
+      keyPresent: !!GOOGLE_API_KEY
+    });
+
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: "Missing input, repo, or GitHub token." })
+      body: JSON.stringify({
+        error: "Missing input, repo, or required API keys."
+      })
     };
   }
 
@@ -39,6 +47,7 @@ exports.handler = async function (event) {
     console.log("📦 Google API result:", JSON.stringify(result, null, 2));
 
     if (!result.candidates || result.candidates.length === 0) {
+      console.warn("⚠️ No place candidates returned for input:", input);
       return {
         statusCode: 404,
         headers,
@@ -69,6 +78,8 @@ exports.handler = async function (event) {
         const checkJson = await checkRes.json();
         sha = checkJson.sha;
         existing = JSON.parse(Buffer.from(checkJson.content, "base64").toString());
+      } else {
+        console.log(`📁 File ${path} does not exist yet – will be created.`);
       }
 
       const newData = append ? [...existing, placeId] : [placeId];
