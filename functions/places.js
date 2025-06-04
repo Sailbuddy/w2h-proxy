@@ -9,30 +9,20 @@ exports.handler = async function (event) {
     "Access-Control-Allow-Headers": "Content-Type"
   };
 
-  // 🪵 Eingehendes Event debuggen
   console.log("➡️ Incoming event:", JSON.stringify(event, null, 2));
 
   const input = event.queryStringParameters?.input;
   const repo = event.queryStringParameters?.repo;
 
-  console.log("🧪 Parsed query parameters:", { input, repo });
-  console.log("🔐 Token loaded:", !!GITHUB_TOKEN, "| Key loaded:", !!GOOGLE_API_KEY);
+  console.log("🧪 Parsed params:", { input, repo });
+  console.log("🔐 Token loaded:", !!GITHUB_TOKEN);
 
-  // 🔍 Fehlerprüfung
-  if (!input || !repo || !GITHUB_TOKEN || !GOOGLE_API_KEY) {
-    console.error("❌ Missing required data:", {
-      inputPresent: !!input,
-      repoPresent: !!repo,
-      tokenPresent: !!GITHUB_TOKEN,
-      keyPresent: !!GOOGLE_API_KEY
-    });
-
+  if (!input || !repo || !GITHUB_TOKEN) {
+    console.error("❌ Missing input, repo or token");
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({
-        error: "Missing input, repo, or required API keys."
-      })
+      body: JSON.stringify({ error: "Missing input, repo, or GitHub token." })
     };
   }
 
@@ -44,10 +34,10 @@ exports.handler = async function (event) {
     const res = await fetch(placeUrl);
     const result = await res.json();
 
-    console.log("📦 Google API result:", JSON.stringify(result, null, 2));
+    console.log("📦 Google API full result:", JSON.stringify(result, null, 2));
+    console.log("🧪 Google Result Candidates:", result?.candidates);
 
     if (!result.candidates || result.candidates.length === 0) {
-      console.warn("⚠️ No place candidates returned for input:", input);
       return {
         statusCode: 404,
         headers,
@@ -78,8 +68,6 @@ exports.handler = async function (event) {
         const checkJson = await checkRes.json();
         sha = checkJson.sha;
         existing = JSON.parse(Buffer.from(checkJson.content, "base64").toString());
-      } else {
-        console.log(`📁 File ${path} does not exist yet – will be created.`);
       }
 
       const newData = append ? [...existing, placeId] : [placeId];
