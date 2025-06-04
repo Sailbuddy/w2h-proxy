@@ -1,18 +1,26 @@
 const fetch = require("node-fetch");
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN_PLAIN;
 
 exports.handler = async function (event) {
   const headers = {
-    "Access-Control-Allow-Origin": "*", // oder z. B. "https://tool.wind2horizon.com"
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type"
   };
 
-  const input = event.queryStringParameters.input;
-  const repo = event.queryStringParameters.repo;
+  // 🪵 Debug-Logging
+  console.log("➡️ Incoming event:", JSON.stringify(event, null, 2));
 
+  const input = event.queryStringParameters?.input;
+  const repo = event.queryStringParameters?.repo;
+
+  console.log("🧪 Parsed params:", { input, repo });
+  console.log("🔐 Token loaded:", !!GITHUB_TOKEN);
+
+  // Fehlerprüfung bei fehlenden Werten
   if (!input || !repo || !GITHUB_TOKEN) {
+    console.error("❌ Missing input, repo or token");
     return {
       statusCode: 400,
       headers,
@@ -20,11 +28,15 @@ exports.handler = async function (event) {
     };
   }
 
-  const placeUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(input)}&inputtype=textquery&fields=place_id,name,geometry&key=${GOOGLE_API_KEY}`;
+  const placeUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(
+    input
+  )}&inputtype=textquery&fields=place_id,name,geometry&key=${GOOGLE_API_KEY}`;
 
   try {
     const res = await fetch(placeUrl);
     const result = await res.json();
+
+    console.log("📦 Google API result:", JSON.stringify(result, null, 2));
 
     if (!result.candidates || result.candidates.length === 0) {
       return {
@@ -34,11 +46,13 @@ exports.handler = async function (event) {
       };
     }
 
-    const placeId = result.candidates[0].place_id;
+    const candidate = result.candidates[0];
+    const placeId = candidate.place_id;
+
     const entry = {
       plus_code_input: input,
       place_id: placeId,
-      name: result.candidates[0].name || null,
+      name: candidate.name || null,
       status: "pending"
     };
 
@@ -60,7 +74,7 @@ exports.handler = async function (event) {
       const newData = append ? [...existing, placeId] : [placeId];
       const b64 = Buffer.from(JSON.stringify(newData, null, 2)).toString("base64");
 
-      await fetch(apiUrl, {
+      const uploadRes = await fetch(apiUrl, {
         method: "PUT",
         headers: {
           Authorization: `token ${GITHUB_TOKEN}`,
@@ -72,6 +86,11 @@ exports.handler = async function (event) {
           sha
         })
       });
+
+      if (!uploadRes.ok) {
+        const errorText = await uploadRes.text();
+        throw new Error(`❌ GitHub upload failed (${path}): ${errorText}`);
+      }
     };
 
     await upload("data/place_ids.json", false);
@@ -80,10 +99,10 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ place_id: placeId, name: result.candidates[0].name })
+      body: JSON.stringify({ place_id: placeId, name: candidate.name })
     };
   } catch (err) {
-    console.error("🔥 Fehler:", err);
+    console.error("🔥 Error during proxy operation:", err);
     return {
       statusCode: 500,
       headers,
