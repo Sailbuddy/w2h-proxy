@@ -1,108 +1,126 @@
 const fetch = require("node-fetch");
 
+// 🌐 API-Keys aus Environment-Variablen holen
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-console.log("🔐 GITHUB_TOKEN env value:", GITHUB_TOKEN);
 
+// 🧪 Wird die Datei überhaupt geladen?
+console.log("🧪 TEST – Funktion places.js wurde geladen.");
+
+// ✅ Hauptfunktion
 exports.handler = async function (event) {
+  // 🪵 Logge eingehenden Event
+  console.log("➡️ Incoming event:", JSON.stringify(event, null, 2));
+
+  // 🛡️ Zeige Token-Status
+  console.log("🔐 GITHUB_TOKEN env value:", GITHUB_TOKEN ? "(vorhanden ✅)" : "(NICHT gesetzt ❌)");
+  console.log("🔐 GOOGLE_API_KEY env value:", GOOGLE_API_KEY ? "(vorhanden ✅)" : "(NICHT gesetzt ❌)");
+
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type"
   };
 
-  console.log("➡️ Incoming event:", JSON.stringify(event, null, 2));
-
-  const input = event.queryStringParameters?.input;
-  const repo = event.queryStringParameters?.repo;
-
-  console.log("🧪 Parsed params:", { input, repo });
-  console.log("🔐 Token loaded:", !!GITHUB_TOKEN);
-
-  if (!input || !repo || !GITHUB_TOKEN) {
-    console.error("❌ Missing input, repo or token");
-    return {
-      statusCode: 400,
-      headers,
-      body: JSON.stringify({ error: "Missing input, repo, or GitHub token." })
-    };
-  }
-
-  const placeUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(
-    input
-  )}&inputtype=textquery&fields=place_id,name,geometry&key=${GOOGLE_API_KEY}`;
-
   try {
-    const res = await fetch(placeUrl);
-    const result = await res.json();
+    const input = new URLSearchParams(event.queryStringParameters).get("input");
+    const repo = new URLSearchParams(event.queryStringParameters).get("repo");
 
-    console.log("📦 Google API full result:", JSON.stringify(result, null, 2));
-    console.log("🧪 Google Result Candidates:", result?.candidates);
+    if (!input || !repo) {
+      console.warn("⚠️ Eingabe oder Repository fehlt.");
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: "Missing input or repo" })
+      };
+    }
+
+    // 🔎 Google Places API abrufen
+    const searchUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(input)}&inputtype=textquery&fields=place_id,name,formatted_address,geometry&key=${GOOGLE_API_KEY}`;
+    console.log("🌍 Google API Request:", searchUrl);
+
+    const response = await fetch(searchUrl);
+    const result = await response.json();
+
+    console.log("🔍 Google Result Candidates:", JSON.stringify(result.candidates, null, 2));
 
     if (!result.candidates || result.candidates.length === 0) {
       return {
         statusCode: 404,
         headers,
-        body: JSON.stringify({ error: "No place found." })
+        body: JSON.stringify({ error: "Kein Ort gefunden. Prüfe Eingabe." })
       };
     }
 
     const candidate = result.candidates[0];
-    const placeId = candidate.place_id;
-
-    const entry = {
-      plus_code_input: input,
-      place_id: placeId,
-      name: candidate.name || null,
-      status: "pending"
+    const newEntry = {
+      place_id: candidate.place_id,
+      name: candidate.name,
+      address: candidate.formatted_address,
+      location: candidate.geometry?.location || {},
+      input,
+      timestamp: new Date().toISOString()
     };
 
-    const upload = async (path, append) => {
-      const apiUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
-      let sha = null;
-      let existing = [];
+    const githubApiUrl = `https://api.github.com/repos/${repo}/contents/data/place_ids.json`;
 
-      const checkRes = await fetch(apiUrl, {
-        headers: { Authorization: `token ${GITHUB_TOKEN}` }
-      });
+    console.log("📦 Neuer Eintrag:", newEntry);
+    console.log("📤 GitHub Upload-Ziel:", githubApiUrl);
 
-      if (checkRes.ok) {
-        const checkJson = await checkRes.json();
-        sha = checkJson.sha;
-        existing = JSON.parse(Buffer.from(checkJson.content, "base64").toString());
+    const getResponse = await fetch(githubApiUrl, {
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github.v3+json"
       }
+    });
 
-      const newData = append ? [...existing, placeId] : [placeId];
-      const b64 = Buffer.from(JSON.stringify(newData, null, 2)).toString("base64");
+    let existingData = [];
+    let sha = null;
 
-      const uploadRes = await fetch(apiUrl, {
-        method: "PUT",
-        headers: {
-          Authorization: `token ${GITHUB_TOKEN}`,
-          "Content-Type": "application/json"
-        },
+    if (getResponse.ok) {
+      const existingFile = await getResponse.json();
+      const content = Buffer.from(existingFile.content, "base64").toString();
+      existingData = JSON.parse(content);
+      sha = existingFile.sha;
+    }
+
+    existingData.push(newEntry);
+
+    const updatedContent = Buffer.from(JSON.stringify(existingData, null, 2)).toString("base64");
+
+    const uploadResponse = await fetch(githubApiUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github.v3+json"
+      },
+      body: JSON.stringify({
+        message: `📍 Neuer Ort hinzugefügt: ${candidate.name}`,
+        content: updatedContent,
+        sha
+      })
+    });
+
+    if (!uploadResponse.ok) {
+      const errorDetail = await uploadResponse.text();
+      console.error("❌ Fehler beim GitHub-Upload:", errorDetail);
+      return {
+        statusCode: 500,
+        headers,
         body: JSON.stringify({
-          message: `🛰️ Update ${path} via proxy`,
-          content: b64,
-          sha
+          error: "GitHub upload failed",
+          details: errorDetail
         })
-      });
+      };
+    }
 
-      if (!uploadRes.ok) {
-        const errorText = await uploadRes.text();
-        throw new Error(`❌ GitHub upload failed (${path}): ${errorText}`);
-      }
-    };
-
-    await upload("data/place_ids.json", false);
-    await upload("data/place_ids_archive.json", true);
-
+    console.log("✅ Upload erfolgreich.");
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ place_id: placeId, name: candidate.name })
+      body: JSON.stringify({ success: true, data: newEntry })
     };
   } catch (err) {
-    console.error("🔥 Error during proxy operation:", err);
+    console.error("💥 Fehler in der Funktion:", err);
     return {
       statusCode: 500,
       headers,
