@@ -1,7 +1,8 @@
 const fetch = require("node-fetch");
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const GITHUB_TOKEN = "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";
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+console.log("🔐 GITHUB_TOKEN env value:", GITHUB_TOKEN);
 
 exports.handler = async function (event) {
   const headers = {
